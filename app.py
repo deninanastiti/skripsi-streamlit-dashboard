@@ -400,6 +400,15 @@ def display_image_if_exists(path, caption, width=None, use_container_width=False
         st.info(f"File belum ditemukan: {path}")
 
 
+def display_image_from_options(path_options, caption, use_container_width=True):
+    for path in path_options:
+        if os.path.exists(path):
+            st.image(path, caption=caption, use_container_width=use_container_width)
+            return
+
+    st.info(f"File belum ditemukan: {path_options[0]}")
+
+
 def get_label_slug(labeling_method):
     return "lexicon" if labeling_method == LEX_NAME else "zsc"
 
@@ -551,6 +560,82 @@ def render_grouped_bar_chart(df, metric_cols):
     )
 
     st.altair_chart(chart, use_container_width=True)
+
+
+def render_label_distribution_comparison():
+    render_section_card(
+        "Perbandingan Distribusi Label Dataset",
+        "Visualisasi ini menampilkan perbandingan distribusi label pada metode Zero Shot Classification dan Lexicon Based Custom Rule.",
+    )
+
+    col_dist1, col_dist2 = st.columns(2)
+
+    with col_dist1:
+        st.markdown("#### Zero Shot Classification Labeling")
+        display_image_from_options(
+            [
+                "Assets/label distribution_zsc.png",
+                "Assets/label_distribution_zsc.png",
+            ],
+            caption="Distribusi Label: Zero Shot Classification Labeling",
+            use_container_width=True,
+        )
+
+    with col_dist2:
+        st.markdown("#### Lexicon Based Custom Rule")
+        display_image_from_options(
+            [
+                "Assets/label distribution_lexicon.png",
+                "Assets/label_distribution_lexicon.png",
+            ],
+            caption="Distribusi Label: Lexicon Based Custom Rule",
+            use_container_width=True,
+        )
+
+    close_section_card()
+
+
+def render_wordcloud_comparison():
+    render_section_card(
+        "Perbandingan Wordcloud Hate Speech dan Non-Hate Speech",
+        "Visualisasi ini menampilkan kata dominan pada masing-masing kelas untuk kedua metode labeling.",
+    )
+
+    st.markdown("#### Zero Shot Classification Labeling")
+    col_zsc1, col_zsc2 = st.columns(2)
+
+    with col_zsc1:
+        display_image_from_options(
+            ["Assets/wordcloud_hate_zsc.png"],
+            caption="Zero Shot - Hate Speech",
+            use_container_width=True,
+        )
+
+    with col_zsc2:
+        display_image_from_options(
+            ["Assets/wordcloud_non_hate_zsc.png"],
+            caption="Zero Shot - Non-Hate Speech",
+            use_container_width=True,
+        )
+
+    st.markdown("#### Lexicon Based Custom Rule")
+    col_lex1, col_lex2 = st.columns(2)
+
+    with col_lex1:
+        display_image_from_options(
+            ["Assets/wordcloud_hate_lexicon.png"],
+            caption="Lexicon - Hate Speech",
+            use_container_width=True,
+        )
+
+    with col_lex2:
+        display_image_from_options(
+            ["Assets/wordcloud_non_hate_lexicon.png"],
+            caption="Lexicon - Non-Hate Speech",
+            use_container_width=True,
+        )
+
+    close_section_card()
 
 
 def clean_label_column(df, text_col, label_col):
@@ -787,22 +872,7 @@ elif main_menu == "Evaluasi Hasil Riset":
 
         st.divider()
 
-        render_section_card(
-            "Distribusi Label Dataset",
-            "Visualisasi persebaran kelas digunakan untuk membaca komposisi data pada metode labeling yang dipilih.",
-        )
-
-        path_space = f"Assets/label distribution_{label_slug}.png"
-        path_underscore = f"Assets/label_distribution_{label_slug}.png"
-
-        if os.path.exists(path_space):
-            st.image(path_space, caption=f"Distribusi Label: {selected_labeling}", use_container_width=True)
-        elif os.path.exists(path_underscore):
-            st.image(path_underscore, caption=f"Distribusi Label: {selected_labeling}", use_container_width=True)
-        else:
-            st.info("File distribusi label belum ditemukan di folder Assets.")
-
-        close_section_card()
+        render_label_distribution_comparison()
 
         render_section_card("Tabel Performa Skema Split")
         st.dataframe(
@@ -849,30 +919,7 @@ elif main_menu == "Evaluasi Hasil Riset":
             close_section_card()
 
         with tab_wordcloud:
-            render_section_card(
-                "Wordcloud Hate Speech dan Non-Hate Speech",
-                "Visualisasi ini membantu melihat kata dominan pada masing-masing kelas hasil labeling.",
-            )
-
-            col_wc1, col_wc2 = st.columns(2)
-
-            with col_wc1:
-                img_h = f"Assets/wordcloud_hate_{label_slug}.png"
-                display_image_if_exists(
-                    img_h,
-                    caption="Wordcloud Hate Speech",
-                    use_container_width=True,
-                )
-
-            with col_wc2:
-                img_nh = f"Assets/wordcloud_non_hate_{label_slug}.png"
-                display_image_if_exists(
-                    img_nh,
-                    caption="Wordcloud Non-Hate Speech",
-                    use_container_width=True,
-                )
-
-            close_section_card()
+            render_wordcloud_comparison()
 
     else:
         summary_df = model_data["KFold_Summary"]
