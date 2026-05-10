@@ -1,11 +1,11 @@
 import os
 import re
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 
-# Konfigurasi halaman
 st.set_page_config(
     page_title="Analysis Dashboard: Hate Speech Detection",
     layout="wide",
@@ -13,7 +13,6 @@ st.set_page_config(
 )
 
 
-# Style dashboard
 st.markdown(
     """
     <style>
@@ -244,6 +243,7 @@ def get_model_data():
                     "Precision (M)": [0.8744, 0.8686, 0.8881],
                     "Recall (M)": [0.9193, 0.9711, 0.9391],
                     "F1-Macro": [0.8951, 0.9112, 0.9114],
+                    "ROC-AUC": [0.9837, 0.9855, 0.9783],
                 }),
                 "KFold_Detail": pd.DataFrame({
                     "Fold": [1, 2, 3, 4, 5],
@@ -313,6 +313,24 @@ def render_research_header(model, labeling):
     )
 
 
+def render_meta_info(labeling, evaluation_type):
+    st.markdown(
+        f"""
+        <div class="meta-row">
+            <div class="meta-pill">
+                <span class="meta-label">Metode labeling:</span>
+                <span class="meta-value">{labeling}</span>
+            </div>
+            <div class="meta-pill">
+                <span class="meta-label">Jenis evaluasi:</span>
+                <span class="meta-value">{evaluation_type}</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_section_card(title, description=None):
     st.markdown("<div class='section-card'>", unsafe_allow_html=True)
     st.subheader(title)
@@ -326,6 +344,8 @@ def close_section_card():
 
 
 def format_metric(value):
+    if pd.isna(value):
+        return "-"
     return f"{value * 100:.2f}%"
 
 
@@ -361,7 +381,11 @@ def style_table(styler):
 
 
 def format_percentage_table(df, subset):
-    styled = df.style.format(subset=subset, formatter="{:.2%}")
+    formatter = {
+        col: (lambda value: "-" if pd.isna(value) else f"{value * 100:.2f}%")
+        for col in subset
+    }
+    styled = df.style.format(formatter)
     return style_table(styled)
 
 
@@ -385,6 +409,148 @@ def get_best_row(df, metric="F1-Macro"):
         return df.loc[df[metric].idxmax()]
 
     return df.iloc[0]
+
+
+def get_comparison_data(all_data, labeling_method, evaluation_type):
+    if evaluation_type == "Skema Split Data":
+        rows = []
+
+        for model_name in ["IndoBERT", "BiLSTM"]:
+            split_df = all_data[model_name][labeling_method]["Split"]
+            best_row = get_best_row(split_df, metric="F1-Macro")
+
+            row = {
+                "Model": model_name,
+                "Skema Terbaik": best_row["Split Scheme"],
+                "Accuracy": best_row["Accuracy"],
+                "Precision": best_row["Precision (M)"],
+                "Recall": best_row["Recall (M)"],
+                "F1-Macro": best_row["F1-Macro"],
+                "ROC-AUC": best_row["ROC-AUC"] if "ROC-AUC" in split_df.columns else pd.NA,
+            }
+
+            rows.append(row)
+
+        return pd.DataFrame(rows)
+
+    rows = []
+
+    for model_name in ["IndoBERT", "BiLSTM"]:
+        summary_df = all_data[model_name][labeling_method]["KFold_Summary"]
+
+        def get_mean(metric_keyword):
+            return summary_df.loc[
+                summary_df["Metric"].str.contains(metric_keyword, case=False),
+                "Mean"
+            ].iloc[0]
+
+        rows.append({
+            "Model": model_name,
+            "Accuracy": get_mean("Accuracy"),
+            "Precision": get_mean("Precision"),
+            "Recall": get_mean("Recall"),
+            "F1-Macro": get_mean("F1"),
+            "ROC-AUC": get_mean("ROC-AUC"),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def get_all_split_comparison(all_data, labeling_method):
+    split_rows = []
+
+    for model_name in ["IndoBERT", "BiLSTM"]:
+        split_df = all_data[model_name][labeling_method]["Split"].copy()
+        best_idx = split_df["F1-Macro"].idxmax()
+
+        split_df.insert(0, "Model", model_name)
+        split_df["Status"] = ""
+        split_df.loc[best_idx, "Status"] = "Skema Terbaik"
+
+        if "ROC-AUC" not in split_df.columns:
+            split_df["ROC-AUC"] = pd.NA
+
+        split_rows.append(split_df)
+
+    return pd.concat(split_rows, ignore_index=True)
+
+
+def get_best_split_rows(all_data, labeling_method):
+    rows = []
+
+    for model_name in ["IndoBERT", "BiLSTM"]:
+        split_df = all_data[model_name][labeling_method]["Split"]
+        best_row = get_best_row(split_df, metric="F1-Macro")
+
+        rows.append({
+            "Model": model_name,
+            "Skema Split Terbaik": best_row["Split Scheme"],
+            "F1-Macro": best_row["F1-Macro"],
+        })
+
+    return pd.DataFrame(rows)
+
+
+def get_best_model_text(comparison_df):
+    best_row = comparison_df.loc[comparison_df["F1-Macro"].idxmax()]
+    return (
+        f"Berdasarkan nilai F1-Macro, model {best_row['Model']} menunjukkan performa "
+        f"terbaik dengan nilai F1-Macro sebesar {format_metric(best_row['F1-Macro'])}. "
+        "ROC-AUC tetap ditampilkan sebagai metrik tambahan, tetapi penentuan model terbaik "
+        "pada dashboard ini didasarkan pada F1-Macro."
+    )
+
+
+def render_single_metric_chart(df, selected_metric):
+    chart_data = df[["Model", selected_metric]].dropna().copy()
+    chart_data["Nilai (%)"] = chart_data[selected_metric] * 100
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5)
+        .encode(
+            x=alt.X("Model:N", title="Model", axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("Nilai (%):Q", title=f"{selected_metric} (%)", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("Model:N", title="Model"),
+            tooltip=[
+                alt.Tooltip("Model:N", title="Model"),
+                alt.Tooltip("Nilai (%):Q", title=f"{selected_metric} (%)", format=".2f"),
+            ],
+        )
+        .properties(height=360)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_grouped_bar_chart(df, metric_cols):
+    chart_data = df.melt(
+        id_vars=["Model"],
+        value_vars=metric_cols,
+        var_name="Metrik",
+        value_name="Nilai",
+    ).dropna()
+
+    chart_data["Nilai (%)"] = chart_data["Nilai"] * 100
+
+    chart = (
+        alt.Chart(chart_data)
+        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            x=alt.X("Metrik:N", title="Metrik", axis=alt.Axis(labelAngle=0)),
+            xOffset=alt.XOffset("Model:N"),
+            y=alt.Y("Nilai (%):Q", title="Nilai (%)", scale=alt.Scale(domain=[0, 100])),
+            color=alt.Color("Model:N", title="Model"),
+            tooltip=[
+                alt.Tooltip("Model:N", title="Model"),
+                alt.Tooltip("Metrik:N", title="Metrik"),
+                alt.Tooltip("Nilai (%):Q", title="Nilai (%)", format=".2f"),
+            ],
+        )
+        .properties(height=420)
+    )
+
+    st.altair_chart(chart, use_container_width=True)
 
 
 def clean_label_column(df, text_col, label_col):
@@ -445,29 +611,158 @@ def get_top_words(text_series, top_n=10):
 
 
 with st.sidebar:
-    st.markdown("<div class='sidebar-title'>Dashboard Analisis</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sidebar-title'>Dashboard Analisis Hate Speech</div>", unsafe_allow_html=True)
     st.markdown(
         "<div class='sidebar-caption'>Evaluasi model deteksi hate speech pada isu Tarif Trump.</div>",
         unsafe_allow_html=True,
     )
 
-    main_menu = st.selectbox(
-        "Pilih Halaman",
-        ["Evaluasi Hasil Riset", "Visualisasi Hasil Klasifikasi"],
+    st.markdown("#### Pilih Halaman")
+    main_menu = st.radio(
+        label="Halaman",
+        options=["Perbandingan Model", "Evaluasi Hasil Riset", "Visualisasi Hasil Klasifikasi"],
+        label_visibility="collapsed",
     )
 
     st.divider()
 
-    if main_menu == "Evaluasi Hasil Riset":
-        selected_model = st.selectbox("Arsitektur Model", ["IndoBERT", "BiLSTM"])
-        selected_labeling = st.selectbox("Metode Labeling", [LEX_NAME, ZSC_NAME])
+    if main_menu == "Perbandingan Model":
+        comparison_labeling = st.radio(
+            "Metode Labeling",
+            [ZSC_NAME, LEX_NAME],
+        )
+
+        comparison_type = st.radio(
+            "Jenis Evaluasi",
+            ["Skema Split Data", "Cross Validation (5-Fold)"],
+        )
+
+    elif main_menu == "Evaluasi Hasil Riset":
+        selected_model = st.radio(
+            "Arsitektur Model",
+            ["IndoBERT", "BiLSTM"],
+        )
+
+        selected_labeling = st.radio(
+            "Metode Labeling",
+            [ZSC_NAME, LEX_NAME],
+        )
+
         analysis_type = st.radio(
             "Jenis Analisis",
             ["Skema Split Data", "Cross Validation (5-Fold)"],
         )
 
 
-if main_menu == "Evaluasi Hasil Riset":
+if main_menu == "Perbandingan Model":
+    if "all_data" not in st.session_state:
+        st.session_state["all_data"] = get_model_data()
+
+    all_data = st.session_state["all_data"]
+
+    render_page_header(
+        title="Perbandingan Performa Model",
+        subtitle="Halaman ini menampilkan perbandingan performa IndoBERT dan BiLSTM berdasarkan metode labeling dan jenis evaluasi yang dipilih.",
+    )
+
+    render_meta_info(comparison_labeling, comparison_type)
+
+    comparison_df = get_comparison_data(
+        all_data,
+        labeling_method=comparison_labeling,
+        evaluation_type=comparison_type,
+    )
+
+    table_percentage_cols = [
+        col for col in ["Accuracy", "Precision", "Recall", "F1-Macro", "ROC-AUC"]
+        if col in comparison_df.columns
+    ]
+
+    chart_percentage_cols = [
+        col for col in table_percentage_cols
+        if comparison_df[col].notna().all()
+    ]
+
+    render_section_card(
+        "Ringkasan Perbandingan Model",
+        "Tabel ini membandingkan performa IndoBERT dan BiLSTM. Model terbaik ditentukan berdasarkan nilai F1-Macro.",
+    )
+
+    st.dataframe(
+        format_percentage_table(comparison_df, table_percentage_cols),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    close_section_card()
+
+    if comparison_type == "Skema Split Data":
+        render_section_card(
+            "Skema Split Terbaik",
+            "Bagian ini menunjukkan skema pembagian data terbaik pada masing-masing model berdasarkan nilai F1-Macro.",
+        )
+
+        best_split_df = get_best_split_rows(all_data, comparison_labeling)
+
+        col_best1, col_best2 = st.columns(2)
+
+        with col_best1:
+            row = best_split_df.iloc[0]
+            st.metric(
+                label=row["Model"],
+                value=row["Skema Split Terbaik"],
+                delta=f"F1-Macro {format_metric(row['F1-Macro'])}",
+            )
+
+        with col_best2:
+            row = best_split_df.iloc[1]
+            st.metric(
+                label=row["Model"],
+                value=row["Skema Split Terbaik"],
+                delta=f"F1-Macro {format_metric(row['F1-Macro'])}",
+            )
+
+        st.markdown("#### Detail Seluruh Skema Split")
+
+        all_split_df = get_all_split_comparison(all_data, comparison_labeling)
+
+        split_percentage_cols = [
+            col for col in ["Accuracy", "Precision (M)", "Recall (M)", "F1-Macro", "ROC-AUC"]
+            if col in all_split_df.columns
+        ]
+
+        st.dataframe(
+            format_percentage_table(all_split_df, split_percentage_cols),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        close_section_card()
+
+    render_section_card(
+        "Grafik Perbandingan Metrik",
+        "Grafik berikut menampilkan perbandingan IndoBERT dan BiLSTM secara berdampingan. Model terbaik tetap ditentukan berdasarkan F1-Macro.",
+    )
+
+    selected_metric = st.radio(
+        "Pilih metrik utama",
+        chart_percentage_cols,
+        horizontal=True,
+    )
+
+    render_single_metric_chart(comparison_df, selected_metric)
+
+    st.markdown("#### Perbandingan Semua Metrik")
+    render_grouped_bar_chart(comparison_df, chart_percentage_cols)
+
+    close_section_card()
+
+    render_section_card("Interpretasi Singkat")
+    st.info(get_best_model_text(comparison_df))
+    close_section_card()
+
+
+elif main_menu == "Evaluasi Hasil Riset":
     if "all_data" not in st.session_state:
         st.session_state["all_data"] = get_model_data()
 
@@ -525,7 +820,12 @@ if main_menu == "Evaluasi Hasil Riset":
                 "Pilih rasio split untuk melihat visualisasi performa model pada skenario pengujian tertentu.",
             )
 
-            split_choice = st.selectbox("Pilih Rasio Split", ["70:30", "80:20", "90:10"])
+            split_choice = st.radio(
+                "Pilih Rasio Split",
+                ["70:30", "80:20", "90:10"],
+                horizontal=True,
+            )
+
             split_slug = split_choice.replace(":", "_")
 
             col1, col2 = st.columns(2)
